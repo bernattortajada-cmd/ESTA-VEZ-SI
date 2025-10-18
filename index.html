@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — Cejas + Boca (WAV)</title>
+  <title>Glass Pulse — Cejas Calibradas + Boca (WAV)</title>
   <style>
     :root { --bg:#0b0b0c; --fg:#e7e7ea; }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
@@ -140,11 +140,16 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
 
         if(!browCalibrated){
           browBase += browsEMA; browFrames++;
-          if(browFrames>40){ browBase/=browFrames; browCalibrated=true; log('Cejas calibradas ✅','ok'); }
+          if(browFrames>70){ browBase/=browFrames; browCalibrated=true; log('Cejas calibradas ✅','ok'); }
         }
 
+        // --- Histéresis y sensibilidad ---
         const liftDelta = browsEMA - browBase;
-        const browsUpNow = browCalibrated && (liftDelta > 0.07); // umbral subir cejas
+        const raiseThreshold = 0.10; // gesto claro
+        const lowerThreshold = 0.06; // libera cuando baja
+        let browsUpNow = browsUp;
+        if (!browsUp && liftDelta > raiseThreshold) browsUpNow = true;
+        if (browsUp && liftDelta < lowerThreshold) browsUpNow = false;
 
         // --- Boca ---
         const mouthDist = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]);
@@ -170,7 +175,7 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
       new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});},
         width:video.videoWidth,height:video.videoHeight}).start();
 
-      log('AR + audio (Cejas + Boca WAV) listos ✅','ok');
+      log('AR + audio (Cejas calibradas + Boca WAV) listos ✅','ok');
     }catch(e){
       log('Error al iniciar: '+e.message,'err');
       ovl.style.display='flex';
