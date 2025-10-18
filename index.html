@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — iOS Fix</title>
+  <title>Glass Pulse — iOS Fix (Cejas + Boca, WAV/MP3)</title>
   <style>
     :root { --bg:#0b0b0c; --fg:#e7e7ea; }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
@@ -48,22 +48,22 @@ const logEl = document.getElementById('log');
 function log(m,c=''){const d=document.createElement('div');d.className=c;d.textContent=m;
 logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
 
-// --- Configuración ---
+// ====== Config general ======
 const AUDIO_CANDIDATES = [
   { A:'assets/glass_A_vocal_loop.wav', B:'assets/glass_B_beat_loop.wav' },
   { A:'assets/glass_A_vocal_loop.mp3', B:'assets/glass_B_beat_loop.mp3' }
 ];
 
 let actx, gainA, gainB, bufA, bufB;
-function ensureCtx(){
-  if(!actx){ actx = new (window.AudioContext||window.webkitAudioContext)(); }
-  return actx;
-}
-function playSilentClick(){
+let started = false; // evita dobles inicios (touch+click)
+
+// ====== WebAudio helpers ======
+function ensureCtx(){ if(!actx){ actx = new (window.AudioContext||window.webkitAudioContext)(); } return actx; }
+function playSilentClick(){ // click inaudible para desbloquear iOS
   const ctx = ensureCtx();
   const o = ctx.createOscillator();
   const g = ctx.createGain();
-  g.gain.value = 0.0001; // inaudible click
+  g.gain.value = 0.0001;
   o.connect(g).connect(ctx.destination);
   o.start(0); o.stop(ctx.currentTime + 0.05);
 }
@@ -88,17 +88,15 @@ function ramp(g,to,time=0.12){
   g.gain.setValueAtTime(g.gain.value, now);
   g.gain.linearRampToValueAtTime(to, now+time);
 }
-
-// --- Desbloqueo completo para iOS ---
 async function unlockAudio(){
   ensureCtx();
   playSilentClick();
   try { await actx.resume(); } catch {}
   log('AudioContext: ' + actx.state, actx.state==='running'?'ok':'warn');
-  return actx.state==='running';
+  return actx.state === 'running';
 }
 
-// --- App principal ---
+// ====== App principal ======
 (async function(){
   const video = document.getElementById('cam');
   const canvas = document.getElementById('fx');
@@ -123,12 +121,18 @@ async function unlockAudio(){
     ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
   }
 
-  async function start(){
+  async function start(e){
+    if (started) return; // anti-doble
+    started = true;
+
     try{
       ovl.style.display='none';
+
+      // 1) Desbloqueo iOS
       const unlocked = await unlockAudio();
       if(!unlocked){ throw new Error('AudioContext bloqueado'); }
 
+      // 2) Carga de audio con fallback WAV→MP3
       log('Cargando audio A/B…','warn');
       let loaded = false;
       for (const cand of AUDIO_CANDIDATES) {
@@ -136,16 +140,25 @@ async function unlockAudio(){
           [bufA, bufB] = await Promise.all([loadBuffer(cand.A), loadBuffer(cand.B)]);
           log(`Audio cargado (${cand.A.endsWith('.wav')?'WAV':'MP3'}) ✅`,'ok');
           loaded = true; break;
-        } catch(e){ log(e.message,'err'); }
+        } catch(err){ log(err.message,'err'); }
       }
       if(!loaded) throw new Error('Error al cargar audios');
 
+      // Inicializa loops en silencio
       gainA = playLoop(bufA);
       gainB = playLoop(bufB);
 
-      const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
-      video.srcObject=stream; await video.play(); log('Cámara OK ✅','ok');
+      // (Opcional) Ping de verificación:
+      // ramp(gainA, 0.35, 0.05); setTimeout(()=>ramp(gainA, 0.0, 0.2), 400);
 
+      // 3) Cámara
+      log('Pidiendo permiso de cámara…','warn');
+      const s = await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:'user', width:{ideal:720}, height:{ideal:1280}}, audio:false
+      });
+      video.srcObject=s; await video.play(); log('Cámara OK ✅','ok');
+
+      // 4) FaceMesh
       const faceMesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`});
       faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.6,minTrackingConfidence:0.6});
 
@@ -154,34 +167,39 @@ async function unlockAudio(){
         const lm=res.multiFaceLandmarks[0];
         const scale=dist(lm[NOSE_BASE],lm[CHIN]);
 
-        const browY=(lm[10].y+lm[67].y+lm[297].y)/3;
-        const eyeY=(lm[159].y+lm[386].y)/2;
-        const browLift=(eyeY-browY)/scale;
-        browsEMA=lerp(browsEMA,browLift,0.25);
+        // --- CEJAS (calibración + histéresis) ---
+        const browY = (lm[10].y + lm[67].y + lm[297].y)/3;
+        const eyeY  = (lm[159].y + lm[386].y)/2;
+        const browLift = (eyeY - browY) / scale;  // ↑ cejas => mayor
+        browsEMA = lerp(browsEMA, browLift, 0.25);
 
         if(!browCalibrated){
-          browBase+=browsEMA;browFrames++;
-          if(browFrames>70){browBase/=browFrames;browCalibrated=true;log('Cejas calibradas ✅','ok');}
+          browBase += browsEMA; browFrames++;
+          if(browFrames>70){ browBase/=browFrames; browCalibrated=true; log('Cejas calibradas ✅','ok'); }
         }
 
-        const liftDelta=browsEMA-browBase;
-        const raiseT=0.10, lowerT=0.06;
-        let browsUpNow=browsUp;
-        if(!browsUp && liftDelta>raiseT) browsUpNow=true;
-        if(browsUp && liftDelta<lowerT) browsUpNow=false;
+        const liftDelta = browsEMA - browBase;
+        const raiseThreshold = 0.10; // más alto = más exigente (0.12–0.15)
+        const lowerThreshold = 0.06; // liberar
+        let browsUpNow = browsUp;
+        if (!browsUp && liftDelta > raiseThreshold) browsUpNow = true;
+        if (browsUp && liftDelta < lowerThreshold) browsUpNow = false;
 
-        const mouthDist=dist(lm[MOUTH_TOP],lm[MOUTH_BOTTOM]);
-        const mouthMetric=mouthDist/scale;
-        mouthEMA=lerp(mouthEMA,mouthMetric,0.35);
-        const mouthOpenNow=mouthEMA>0.30;
+        // --- BOCA ---
+        const mouthDist = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]);
+        const mouthMetric = mouthDist/scale;
+        mouthEMA = lerp(mouthEMA, mouthMetric, 0.35);
+        const mouthOpenNow = mouthEMA > 0.30;
 
-        if(mouthOpenNow&&!mouthOpen) ramp(gainA,0.9);
-        if(!mouthOpenNow&&mouthOpen) ramp(gainA,0.0);
-        mouthOpen=mouthOpenNow;
+        // 👄 Abrir boca → A
+        if (mouthOpenNow && !mouthOpen) ramp(gainA,0.9);
+        if (!mouthOpenNow && mouthOpen) ramp(gainA,0.0);
+        mouthOpen = mouthOpenNow;
 
-        if(browsUpNow&&!browsUp) ramp(gainB,0.95);
-        if(!browsUpNow&&browsUp) ramp(gainB,0.0);
-        browsUp=browsUpNow;
+        // 👆 Subir cejas → B
+        if (browsUpNow && !browsUp) ramp(gainB,0.95);
+        if (!browsUpNow && browsUp) ramp(gainB,0.0);
+        browsUp = browsUpNow;
 
         browDot.classList.toggle('on',browsUp);
         mouthDot.classList.toggle('on',mouthOpen);
@@ -189,16 +207,18 @@ async function unlockAudio(){
       });
 
       new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});}}).start();
-      log('AR + audio (iOS fix) listos ✅','ok');
+      log('AR + audio listos ✅','ok');
     }catch(e){
-      log('Error: '+(e.message||e),'err');
+      log('Error: '+(e?.message||e),'err');
       ovl.style.display='flex';
-      ovl.querySelector('.cta').textContent='Permite cámara/sonido (candado) y toca aquí de nuevo';
+      ovl.querySelector('.cta').textContent='Pulsa aquí de nuevo. Si sigue, revisa permisos y formato de audio.';
+      started = false; // permite reintentar si falló
     }
   }
 
-  document.getElementById('stage').addEventListener('click',start);
-  document.getElementById('stage').addEventListener('touchstart',start);
+  // Listener único para evitar doble inicio (touch + click)
+  document.getElementById('stage').addEventListener('pointerdown', start, { once:true });
+
   log('Tip: quita el Modo Silencio del iPhone y sube volumen 🔊','warn');
 })();
 </script>
