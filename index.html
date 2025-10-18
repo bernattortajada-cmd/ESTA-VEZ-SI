@@ -1,32 +1,25 @@
 <!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — Cejas + Boca (iOS fix, reintento)</title>
-  <style>
-    :root { --bg:#0b0b0c; --fg:#e7e7ea; }
-    html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu;}
-    .wrap{display:grid;place-items:center;min-height:100vh;padding:16px;gap:12px}
-    .stage{position:relative;width:min(92vw,540px);aspect-ratio:9/16;border-radius:20px;
-      overflow:hidden;box-shadow:0 15px 40px rgba(0,0,0,.45);background:#000}
-    video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
-    canvas{position:absolute;inset:0;width:100%;height:100%}
-    .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-      background:rgba(0,0,0,.6);z-index:9;cursor:pointer;text-align:center}
-    .cta{background:#ffffff10;border:1px solid #ffffff30;color:#fff;padding:14px 18px;
-      border-radius:14px;font-size:16px;backdrop-filter: blur(6px);}
-    .badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
-    .pill{font-size:12px;opacity:.85;border:1px solid #29292e;padding:6px 10px;
-      border-radius:999px;background:#17171a}
-    .dot{display:inline-block;width:8px;height:8px;border-radius:999px;background:#888;margin-right:6px}
-    .dot.on{background:#6ee7ff}
-    .log{max-width:540px;width:100%;background:#111;border:1px solid #2b2b31;border-radius:12px;
-      padding:10px;font-size:12px;line-height:1.35;white-space:pre-wrap}
-    .ok{color:#9BEF8A} .warn{color:#FFD166} .err{color:#FF6B6B}
-  </style>
-</head>
+<html lang="es"><head>
+<meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Glass Pulse — Cejas+Boca (con Test)</title>
+<style>
+:root{--bg:#0b0b0c;--fg:#e7e7ea}html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:system-ui}
+.wrap{display:grid;place-items:center;min-height:100vh;padding:16px;gap:12px}
+.stage{position:relative;width:min(92vw,540px);aspect-ratio:9/16;border-radius:20px;overflow:hidden;box-shadow:0 15px 40px rgba(0,0,0,.45);background:#000}
+video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+canvas{position:absolute;inset:0;width:100%;height:100%}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.6);z-index:9;cursor:pointer;text-align:center}
+.cta{background:#ffffff10;border:1px solid #ffffff30;color:#fff;padding:14px 18px;border-radius:14px;font-size:16px;backdrop-filter: blur(6px)}
+.badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.pill{font-size:12px;opacity:.85;border:1px solid #29292e;padding:6px 10px;border-radius:999px;background:#17171a}
+.dot{display:inline-block;width:8px;height:8px;border-radius:999px;background:#888;margin-right:6px}
+.dot.on{background:#6ee7ff}
+.controls{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+button{padding:10px 12px;border-radius:10px;border:1px solid #333;background:#1a1a1f;color:#fff}
+.log{max-width:540px;width:100%;background:#111;border:1px solid #2b2b31;border-radius:12px;padding:10px;font-size:12px;line-height:1.35;white-space:pre-wrap}
+.ok{color:#9BEF8A}.warn{color:#FFD166}.err{color:#FF6B6B}
+.meters{font-size:12px;opacity:.85;text-align:center}
+</style></head>
 <body>
 <div class="wrap">
   <div class="stage" id="stage">
@@ -38,178 +31,93 @@
     <span class="pill"><span class="dot" id="browDot"></span>Cejas arriba ▸ B</span>
     <span class="pill"><span class="dot" id="mouthDot"></span>Boca abierta ▸ A</span>
   </div>
+  <div class="controls">
+    <button id="testA">▶ Test A</button>
+    <button id="testB">▶ Test B</button>
+    <button id="stopAll">⏹ Stop</button>
+  </div>
+  <div class="meters"><span id="mBrow">browΔ: -</span> · <span id="mMouth">mouth: -</span></div>
   <div class="log" id="log"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js"></script>
 <script>
-const logEl = document.getElementById('log');
-function log(m,c=''){const d=document.createElement('div');d.className=c;d.textContent=m;
-logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
+const logEl=document.getElementById('log');const log=(m,c='')=>{const d=document.createElement('div');d.className=c;d.textContent=m;logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
+const AUDIO_CANDIDATES=[{A:'assets/glass_A_vocal_loop.wav',B:'assets/glass_B_beat_loop.wav'},{A:'assets/glass_A_vocal_loop.mp3',B:'assets/glass_B_beat_loop.mp3'}];
+let actx, gainA, gainB, bufA, bufB, started=false;
+function ctx(){return actx||(actx=new (window.AudioContext||window.webkitAudioContext)());}
+function silentClick(){const c=ctx();const o=c.createOscillator();const g=c.createGain();g.gain.value=0.0001;o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+0.05);}
+async function unlock(){ctx();silentClick();try{await actx.resume();}catch{}log('AudioContext: '+actx.state, actx.state==='running'?'ok':'warn');return actx.state==='running';}
+async function loadBuf(u){const r=await fetch(u,{cache:'no-store'});if(!r.ok)throw new Error('No se pudo cargar '+u);const a=await r.arrayBuffer();try{return await ctx().decodeAudioData(a);}catch(e){throw new Error('Decoding failed '+u)}}
+async function loadAB(){for(const c of AUDIO_CANDIDATES){try{[bufA,bufB]=await Promise.all([loadBuf(c.A),loadBuf(c.B)]);log('Audio cargado '+(c.A.endsWith('.wav')?'(WAV)':'(MP3)'),'ok');return;}catch(e){log(e.message,'err')}}throw new Error('No pude cargar A/B');}
+function ensureGains(){const c=ctx();if(!gainA){gainA=c.createGain();gainA.gain.value=0;gainA.connect(c.destination)}if(!gainB){gainB=c.createGain();gainB.gain.value=0;gainB.connect(c.destination)}}
+function playLoop(buffer, g){const c=ctx();const s=c.createBufferSource();s.buffer=buffer;s.loop=true;s.connect(g);s.start();return s;}
+function ramp(g,to,t=0.12){const c=ctx();const now=c.currentTime;g.gain.cancelScheduledValues(now);g.gain.setValueAtTime(g.gain.value,now);g.gain.linearRampToValueAtTime(to,now+t);}
+let srcA=null, srcB=null;
+function testA(){ensureGains(); if(srcA){try{srcA.stop()}catch{} } srcA=playLoop(bufA,gainA); ramp(gainA,0.85,0.05); log('Test A ▶','ok');}
+function testB(){ensureGains(); if(srcB){try{srcB.stop()}catch{} } srcB=playLoop(bufB,gainB); ramp(gainB,0.85,0.05); log('Test B ▶','ok');}
+function stopAll(){try{srcA&&srcA.stop()}catch{}try{srcB&&srcB.stop()}catch{}srcA=srcB=null;if(gainA)gainA.gain.value=0;if(gainB)gainB.gain.value=0;log('Stop ⏹');}
 
-const AUDIO_CANDIDATES = [
-  { A:'assets/glass_A_vocal_loop.wav', B:'assets/glass_B_beat_loop.wav' },
-  { A:'assets/glass_A_vocal_loop.mp3', B:'assets/glass_B_beat_loop.mp3' }
-];
-
-let actx, gainA, gainB, bufA, bufB;
-let started = false;
-
-function ensureCtx(){ if(!actx){ actx = new (window.AudioContext||window.webkitAudioContext)(); } return actx; }
-function playSilentClick(){
-  const ctx = ensureCtx();
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
-  g.gain.value = 0.0001;
-  o.connect(g).connect(ctx.destination);
-  o.start(0); o.stop(ctx.currentTime + 0.05);
-}
-async function loadBuffer(url){
-  const res = await fetch(url,{cache:"no-store"});
-  if(!res.ok) throw new Error(`No se pudo cargar ${url}`);
-  const arr = await res.arrayBuffer();
-  try { return await ensureCtx().decodeAudioData(arr); }
-  catch(e){ throw new Error(`Decoding failed: ${url}`); }
-}
-function playLoop(buffer){
-  const ctx = ensureCtx();
-  const src = ctx.createBufferSource();
-  src.buffer = buffer; src.loop = true;
-  const g = ctx.createGain(); g.gain.value = 0.0;
-  src.connect(g).connect(ctx.destination); src.start(0);
-  return g;
-}
-function ramp(g,to,time=0.12){
-  const ctx=ensureCtx(); const now=ctx.currentTime;
-  g.gain.cancelScheduledValues(now);
-  g.gain.setValueAtTime(g.gain.value, now);
-  g.gain.linearRampToValueAtTime(to, now+time);
-}
-async function unlockAudio(){
-  ensureCtx(); playSilentClick();
-  try { await actx.resume(); } catch {}
-  log('AudioContext: ' + actx.state, actx.state==='running'?'ok':'warn');
-  return actx.state === 'running';
-}
-
-(async function(){
-  const video = document.getElementById('cam');
-  const canvas = document.getElementById('fx');
-  const ctx = canvas.getContext('2d');
-  const ovl = document.getElementById('ovl');
-  const browDot = document.getElementById('browDot');
-  const mouthDot = document.getElementById('mouthDot');
-
-  const lerp=(a,b,t)=>a+(b-a)*t;
-  const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+(function(){
+  const video=document.getElementById('cam');const canvas=document.getElementById('fx');const ctx2=canvas.getContext('2d');
+  const ovl=document.getElementById('ovl');const browDot=document.getElementById('browDot');const mouthDot=document.getElementById('mouthDot');
+  const mBrow=document.getElementById('mBrow');const mMouth=document.getElementById('mMouth');
+  const lerp=(a,b,t)=>a+(b-a)*t;const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
   const NOSE_BASE=1,CHIN=152,MOUTH_TOP=13,MOUTH_BOTTOM=14;
-
-  let browsUp=false,mouthOpen=false,browsEMA=0,mouthEMA=0;
-  let browBase=0,browFrames=0,browCalibrated=false;
+  let browsUp=false,mouthOpen=false,browsEMA=0,mouthEMA=0,browBase=0,browFrames=0,browCal=false;
 
   async function start(){
-    if (started) return;
-    started = true;
+    if(started) return; started=true;
+    try{
+      log('Desbloqueando audio…','warn'); const ok=await unlock(); if(!ok) throw new Error('Audio bloqueado');
+      log('Cargando audio…','warn'); await loadAB(); ensureGains();
+      log('Pidiendo cámara…','warn');
+      const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:720},height:{ideal:1280}},audio:false});
+      const watchdog=setTimeout(()=>{ovl.style.display='flex';ovl.querySelector('.cta').textContent='No se pudo iniciar la cámara. Toca para reintentar.'; started=false; log('Watchdog: sin video','err');},5000);
+      video.srcObject=s; await video.play(); clearTimeout(watchdog); log('Cámara OK ✅','ok'); ovl.style.display='none';
 
-    try {
-      log('Desbloqueando audio…','warn');
-      const unlocked = await unlockAudio();
-      if(!unlocked) throw new Error('AudioContext bloqueado');
+      const fm=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`});
+      fm.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.6,minTrackingConfidence:0.6});
+      fm.onResults((res)=>{
+        if(!res||!res.multiFaceLandmarks||!res.multiFaceLandmarks.length) return;
+        const lm=res.multiFaceLandmarks[0]; const scale=dist(lm[NOSE_BASE],lm[CHIN]);
 
-      log('Cargando audio A/B…','warn');
-      let loaded = false;
-      for (const cand of AUDIO_CANDIDATES) {
-        try {
-          [bufA, bufB] = await Promise.all([loadBuffer(cand.A), loadBuffer(cand.B)]);
-          log(`Audio cargado (${cand.A.endsWith('.wav')?'WAV':'MP3'}) ✅`,'ok');
-          loaded = true; break;
-        } catch(err){ log(err.message,'err'); }
-      }
-      if(!loaded) throw new Error('Error al cargar audios');
+        const browY=(lm[10].y+lm[67].y+lm[297].y)/3, eyeY=(lm[159].y+lm[386].y)/2;
+        const browLift=(eyeY-browY)/scale; browsEMA=lerp(browsEMA,browLift,0.25);
+        if(!browCal){browBase+=browsEMA; browFrames++; if(browFrames>70){browBase/=browFrames;browCal=true;log('Cejas calibradas ✅','ok');}}
+        const lift=browsEMA-browBase; const raiseT=0.10, lowerT=0.06;
+        let browsUpNow=browsUp; if(!browsUp && lift>raiseT) browsUpNow=true; if(browsUp && lift<lowerT) browsUpNow=false;
 
-      gainA = playLoop(bufA);
-      gainB = playLoop(bufB);
+        const mouthDist=dist(lm[MOUTH_TOP],lm[MOUTH_BOTTOM]); const mouthMetric=mouthDist/scale;
+        mouthEMA=lerp(mouthEMA,mouthMetric,0.35); const mouthOpenNow=mouthEMA>0.30;
 
-      log('Pidiendo permiso de cámara…','warn');
-      const s = await navigator.mediaDevices.getUserMedia({
-        video:{facingMode:'user',width:{ideal:720},height:{ideal:1280}},audio:false
-      });
-
-      const watchdog = setTimeout(()=>{
-        ovl.style.display='flex';
-        ovl.querySelector('.cta').textContent='No se pudo iniciar la cámara. Toca para reintentar.';
-        log('Watchdog: video no inició en 5s','err');
-        started = false;
-      },5000);
-
-      video.srcObject=s;
-      await video.play();
-      clearTimeout(watchdog);
-      log('Cámara OK ✅','ok');
-      ovl.style.display='none';
-
-      const faceMesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`});
-      faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.6,minTrackingConfidence:0.6});
-
-      faceMesh.onResults((res)=>{
-        if(!res||!res.multiFaceLandmarks||!res.multiFaceLandmarks.length)return;
-        const lm=res.multiFaceLandmarks[0];
-        const scale=dist(lm[NOSE_BASE],lm[CHIN]);
-
-        const browY=(lm[10].y+lm[67].y+lm[297].y)/3;
-        const eyeY=(lm[159].y+lm[386].y)/2;
-        const browLift=(eyeY-browY)/scale;
-        browsEMA=lerp(browsEMA,browLift,0.25);
-
-        if(!browCalibrated){
-          browBase+=browsEMA;browFrames++;
-          if(browFrames>70){browBase/=browFrames;browCalibrated=true;log('Cejas calibradas ✅','ok');}
-        }
-
-        const liftDelta=browsEMA-browBase;
-        const raiseT=0.10,lowerT=0.06;
-        let browsUpNow=browsUp;
-        if(!browsUp && liftDelta>raiseT) browsUpNow=true;
-        if(browsUp && liftDelta<lowerT) browsUpNow=false;
-
-        const mouthDist=dist(lm[MOUTH_TOP],lm[MOUTH_BOTTOM]);
-        const mouthMetric=mouthDist/scale;
-        mouthEMA=lerp(mouthEMA,mouthMetric,0.35);
-        const mouthOpenNow=mouthEMA>0.30;
-
-        if(mouthOpenNow&&!mouthOpen) ramp(gainA,0.9);
-        if(!mouthOpenNow&&mouthOpen) ramp(gainA,0.0);
+        // gestos → audio
+        if(mouthOpenNow&&!mouthOpen){ if(!srcA) srcA=playLoop(bufA,gainA); ramp(gainA,0.9); }
+        if(!mouthOpenNow&&mouthOpen){ ramp(gainA,0.0); }
         mouthOpen=mouthOpenNow;
 
-        if(browsUpNow&&!browsUp) ramp(gainB,0.95);
-        if(!browsUpNow&&browsUp) ramp(gainB,0.0);
+        if(browsUpNow&&!browsUp){ if(!srcB) srcB=playLoop(bufB,gainB); ramp(gainB,0.95); }
+        if(!browsUpNow&&browsUp){ ramp(gainB,0.0); }
         browsUp=browsUpNow;
 
-        browDot.classList.toggle('on',browsUp);
-        mouthDot.classList.toggle('on',mouthOpen);
+        browDot.classList.toggle('on',browsUp); mouthDot.classList.toggle('on',mouthOpen);
+        mBrow.textContent='browΔ: '+lift.toFixed(3)+' (T='+raiseT+')'; mMouth.textContent='mouth: '+mouthEMA.toFixed(3)+' (T=0.30)';
 
-        const w=canvas.width=video.videoWidth||540;
-        const h=canvas.height=video.videoHeight||960;
-        const g=ctx.createRadialGradient(w*0.5,h*0.35,10,w*0.5,h*0.55,Math.max(w,h)*0.8);
-        g.addColorStop(0,'rgba(255,255,255,0.03)');
-        g.addColorStop(1,'rgba(0,0,0,0.35)');
-        ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
+        const w=canvas.width=video.videoWidth||540,h=canvas.height=video.videoHeight||960;
+        const g=ctx2.createRadialGradient(w*0.5,h*0.35,10,w*0.5,h*0.55,Math.max(w,h)*0.8);
+        g.addColorStop(0,'rgba(255,255,255,0.03)'); g.addColorStop(1,'rgba(0,0,0,0.35)'); ctx2.fillStyle=g; ctx2.fillRect(0,0,w,h);
       });
-
-      new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});}}).start();
+      new Camera(video,{onFrame:async()=>{await fm.send({image:video});}}).start();
       log('AR + audio listos ✅','ok');
-    } catch(e){
-      log('Error: '+(e?.message||e),'err');
-      ovl.style.display='flex';
-      ovl.querySelector('.cta').textContent='Algo falló. Toca aquí para reintentar.';
-      started = false;
-    }
+    }catch(e){log('Error: '+(e?.message||e),'err');ovl.style.display='flex';ovl.querySelector('.cta').textContent='Reintentar'; started=false;}
   }
 
-  document.getElementById('stage').addEventListener('pointerdown', start, { once:false });
-  log('Tip: quita el Modo Silencio del iPhone y sube volumen 🔊','warn');
+  document.getElementById('stage').addEventListener('pointerdown', start, {once:false});
+  document.getElementById('testA').addEventListener('click', ()=>{ if(!bufA){log('Carga audio primero (toca el recuadro).','warn');return;} testA(); });
+  document.getElementById('testB').addEventListener('click', ()=>{ if(!bufB){log('Carga audio primero (toca el recuadro).','warn');return;} testB(); });
+  document.getElementById('stopAll').addEventListener('click', stopAll);
+  log('Tip: quita modo silencio y sube volumen 🔊','warn');
 })();
 </script>
-</body>
-</html>
+</body></html>
