@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — WebAudio WAV</title>
+  <title>Glass Pulse — FINAL WAV</title>
   <style>
     :root { --bg:#0b0b0c; --fg:#e7e7ea; }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
@@ -35,8 +35,8 @@
     <div class="overlay" id="ovl"><div class="cta">Toca aquí para iniciar cámara + audio</div></div>
   </div>
   <div class="badges">
-    <span class="pill"><span class="dot" id="eyeDot"></span>Ojos cerrados ▸ A</span>
-    <span class="pill"><span class="dot" id="mouthDot"></span>Boca abierta ▸ B</span>
+    <span class="pill"><span class="dot" id="eyeDot"></span>Ojos cerrados ▸ B</span>
+    <span class="pill"><span class="dot" id="mouthDot"></span>Boca abierta ▸ A</span>
   </div>
   <div class="log" id="log"></div>
 </div>
@@ -106,20 +106,6 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
     ctx.rotate(-Math.PI/12);
     for(let i=-h;i<w+h;i+=120){ctx.fillRect(i,-h,40,h*2);}
     ctx.setTransform(1,0,0,1,0,0);
-    if(eyesClosed){
-      ctx.globalCompositeOperation='screen';
-      ctx.strokeStyle='rgba(255,255,255,0.35)';
-      ctx.lineWidth=1.2;
-      const idsL=[234,93,132,58],idsR=[454,323,361,288];
-      ctx.beginPath();
-      idsL.forEach((id,idx)=>{const p=lm[id];const x=p.x*w,y=p.y*h;
-        idx?ctx.lineTo(x,y):ctx.moveTo(x,y);});
-      ctx.stroke();
-      ctx.beginPath();
-      idsR.forEach((id,idx)=>{const p=lm[id];const x=p.x*w,y=p.y*h;
-        idx?ctx.lineTo(x,y):ctx.moveTo(x,y);});
-      ctx.stroke();
-    }
     ctx.globalCompositeOperation='source-over';
   }
 
@@ -140,31 +126,42 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
 
       const faceMesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`});
       faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.6,minTrackingConfidence:0.6});
+
       faceMesh.onResults((res)=>{
         if(!res||!res.multiFaceLandmarks||!res.multiFaceLandmarks.length)return;
         const lm=res.multiFaceLandmarks[0];
         const scale=dist(lm[NOSE_BASE],lm[CHIN]);
+
         const lEye=dist(lm[L_EYE_TOP],lm[L_EYE_BOTTOM]),
               rEye=dist(lm[R_EYE_TOP],lm[R_EYE_BOTTOM]);
         const eyeMetric=1-((lEye+rEye)/(2*scale));
-        eyesEMA=lerp(eyesEMA,eyeMetric,0.35);
-        const eyesClosedNow=eyesEMA>0.62;
         const mouthMetric=dist(lm[MOUTH_TOP],lm[MOUTH_BOTTOM])/scale;
+
+        eyesEMA=lerp(eyesEMA,eyeMetric,0.35);
         mouthEMA=lerp(mouthEMA,mouthMetric,0.35);
-        const mouthOpenNow=mouthEMA>0.28;
-        if(eyesClosedNow&&!eyesClosed){ramp(gainA,0.9);}
-        if(!eyesClosedNow&&eyesClosed){ramp(gainA,0.0);}
-        eyesClosed=eyesClosedNow;
-        if(mouthOpenNow&&!mouthOpen){ramp(gainB,0.95);}
-        if(!mouthOpenNow&&mouthOpen){ramp(gainB,0.0);}
-        mouthOpen=mouthOpenNow;
+
+        const eyesClosedNow = eyesEMA>0.63;
+        const mouthOpenNow = mouthEMA>0.30;
+
+        // 👄 Abrir boca → Audio A
+        if (mouthOpenNow && !mouthOpen) { ramp(gainA,0.9); }
+        if (!mouthOpenNow && mouthOpen) { ramp(gainA,0.0); }
+        mouthOpen = mouthOpenNow;
+
+        // 👁️ Cerrar ojos → Audio B
+        if (eyesClosedNow && !eyesClosed) { ramp(gainB,0.95); }
+        if (!eyesClosedNow && eyesClosed) { ramp(gainB,0.0); }
+        eyesClosed = eyesClosedNow;
+
         eyeDot.classList.toggle('on',eyesClosed);
         mouthDot.classList.toggle('on',mouthOpen);
         drawGlass(lm);
       });
+
       new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});},
         width:video.videoWidth,height:video.videoHeight}).start();
-      log('AR + audio (WebAudio WAV) listos ✅','ok');
+
+      log('AR + audio (FINAL WAV) listos ✅','ok');
     }catch(e){
       log('Error al iniciar: '+e.message,'err');
       ovl.style.display='flex';
