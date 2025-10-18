@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — Cejas + Boca (WAV/MP3)</title>
+  <title>Glass Pulse — iOS Fix</title>
   <style>
     :root { --bg:#0b0b0c; --fg:#e7e7ea; }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
@@ -48,6 +48,57 @@ const logEl = document.getElementById('log');
 function log(m,c=''){const d=document.createElement('div');d.className=c;d.textContent=m;
 logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
 
+// --- Configuración ---
+const AUDIO_CANDIDATES = [
+  { A:'assets/glass_A_vocal_loop.wav', B:'assets/glass_B_beat_loop.wav' },
+  { A:'assets/glass_A_vocal_loop.mp3', B:'assets/glass_B_beat_loop.mp3' }
+];
+
+let actx, gainA, gainB, bufA, bufB;
+function ensureCtx(){
+  if(!actx){ actx = new (window.AudioContext||window.webkitAudioContext)(); }
+  return actx;
+}
+function playSilentClick(){
+  const ctx = ensureCtx();
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  g.gain.value = 0.0001; // inaudible click
+  o.connect(g).connect(ctx.destination);
+  o.start(0); o.stop(ctx.currentTime + 0.05);
+}
+async function loadBuffer(url){
+  const res = await fetch(url,{cache:"no-store"});
+  if(!res.ok) throw new Error(`No se pudo cargar ${url}`);
+  const arr = await res.arrayBuffer();
+  try { return await ensureCtx().decodeAudioData(arr); }
+  catch(e){ throw new Error(`Decoding failed: ${url}`); }
+}
+function playLoop(buffer){
+  const ctx = ensureCtx();
+  const src = ctx.createBufferSource();
+  src.buffer = buffer; src.loop = true;
+  const g = ctx.createGain(); g.gain.value = 0.0;
+  src.connect(g).connect(ctx.destination); src.start(0);
+  return g;
+}
+function ramp(g,to,time=0.12){
+  const ctx=ensureCtx(); const now=ctx.currentTime;
+  g.gain.cancelScheduledValues(now);
+  g.gain.setValueAtTime(g.gain.value, now);
+  g.gain.linearRampToValueAtTime(to, now+time);
+}
+
+// --- Desbloqueo completo para iOS ---
+async function unlockAudio(){
+  ensureCtx();
+  playSilentClick();
+  try { await actx.resume(); } catch {}
+  log('AudioContext: ' + actx.state, actx.state==='running'?'ok':'warn');
+  return actx.state==='running';
+}
+
+// --- App principal ---
 (async function(){
   const video = document.getElementById('cam');
   const canvas = document.getElementById('fx');
@@ -56,100 +107,45 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
   const browDot = document.getElementById('browDot');
   const mouthDot = document.getElementById('mouthDot');
 
-  // === Archivos candidatos: primero WAV, si falla decodificación probamos MP3 ===
-  const AUDIO_CANDIDATES = [
-    { A: 'assets/glass_A_vocal_loop.mp3', B: 'assets/glass_B_beat_loop.mp3' },
-    { A: 'assets/glass_A_vocal_loop.mp3', B: 'assets/glass_B_beat_loop.mp3' }
-  ];
-
-  // --- WebAudio (iOS friendly) ---
-  let actx, gainA, gainB, bufA, bufB;
-  function ensureCtx(){ if(!actx){ actx = new (window.AudioContext||window.webkitAudioContext)(); } return actx; }
-  async function loadBuffer(url){
-    const res = await fetch(url, { cache:"no-store" });
-    if(!res.ok) throw new Error(`No se pudo cargar ${url} (${res.status})`);
-    const arr = await res.arrayBuffer();
-    try { return await ensureCtx().decodeAudioData(arr); }
-    catch(e){ throw new Error(`Decoding failed: ${url}`); }
-  }
-  function playLoop(buffer){
-    const ctx = ensureCtx();
-    const src = ctx.createBufferSource();
-    src.buffer = buffer; src.loop = true;
-    const g = ctx.createGain(); g.gain.value = 0.0;
-    src.connect(g).connect(ctx.destination); src.start(0);
-    return g;
-  }
-  function ramp(g,to,time=0.12){
-    const ctx = ensureCtx(); const now = ctx.currentTime;
-    g.gain.cancelScheduledValues(now);
-    g.gain.setValueAtTime(g.gain.value, now);
-    g.gain.linearRampToValueAtTime(to, now+time);
-  }
-  async function unlockAudioOnce(){
-    ensureCtx();
-    try { await actx.resume(); } catch {}
-    log(`AudioContext: ${actx.state}`, actx.state==='running'?'ok':'warn');
-    return actx.state;
-  }
-
-  // --- Estados y helpers de landmarks ---
-  let browsUp=false, mouthOpen=false, browsEMA=0, mouthEMA=0;
-  let browBase=0, browFrames=0, browCalibrated=false;
   const lerp=(a,b,t)=>a+(b-a)*t;
-  const NOSE_BASE=1, CHIN=152, MOUTH_TOP=13, MOUTH_BOTTOM=14;
   const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+  const NOSE_BASE=1,CHIN=152,MOUTH_TOP=13,MOUTH_BOTTOM=14;
+
+  let browsUp=false,mouthOpen=false,browsEMA=0,mouthEMA=0;
+  let browBase=0,browFrames=0,browCalibrated=false;
 
   function drawGlass(lm){
     const w=canvas.width=video.videoWidth||540;
     const h=canvas.height=video.videoHeight||960;
     const g=ctx.createRadialGradient(w*0.5,h*0.35,10,w*0.5,h*0.55,Math.max(w,h)*0.8);
-    g.addColorStop(0,'rgba(255,255,255,0.03)'); g.addColorStop(1,'rgba(0,0,0,0.35)');
+    g.addColorStop(0,'rgba(255,255,255,0.03)');
+    g.addColorStop(1,'rgba(0,0,0,0.35)');
     ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
-    const strength=mouthOpen?0.18:0.07;
-    ctx.globalCompositeOperation='lighter';
-    ctx.fillStyle=`rgba(200,230,255,${strength})`;
-    ctx.rotate(-Math.PI/12);
-    for(let i=-h;i<w+h;i+=120){ctx.fillRect(i,-h,40,h*2);}
-    ctx.setTransform(1,0,0,1,0,0);
-    ctx.globalCompositeOperation='source-over';
   }
 
   async function start(){
     try{
       ovl.style.display='none';
+      const unlocked = await unlockAudio();
+      if(!unlocked){ throw new Error('AudioContext bloqueado'); }
 
-      // 1) Desbloqueo de audio (iOS)
-      await unlockAudioOnce();
-
-      // 2) Cargar audio con fallback WAV→MP3
       log('Cargando audio A/B…','warn');
-      let loadError = null;
+      let loaded = false;
       for (const cand of AUDIO_CANDIDATES) {
         try {
           [bufA, bufB] = await Promise.all([loadBuffer(cand.A), loadBuffer(cand.B)]);
           log(`Audio cargado (${cand.A.endsWith('.wav')?'WAV':'MP3'}) ✅`,'ok');
-          break;
-        } catch(e){ loadError = e; log(e.message,'err'); }
+          loaded = true; break;
+        } catch(e){ log(e.message,'err'); }
       }
-      if (!bufA || !bufB) {
-        ovl.style.display = 'flex';
-        ovl.querySelector('.cta').textContent =
-          'No pude decodificar WAV/MP3. Reexporta A/B a WAV 16-bit 44.1k (o sube MP3) y toca aquí.';
-        throw loadError || new Error('Audio no disponible');
-      }
-      // Inicializa fuentes (en silencio)
+      if(!loaded) throw new Error('Error al cargar audios');
+
       gainA = playLoop(bufA);
       gainB = playLoop(bufB);
 
-      // 3) Cámara
-      log('Pidiendo permiso de cámara…','warn');
-      const s = await navigator.mediaDevices.getUserMedia({
-        video:{facingMode:'user',width:{ideal:720},height:{ideal:1280}}, audio:false
-      });
-      video.srcObject=s; await video.play(); log('Cámara OK ✅','ok');
+      const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
+      video.srcObject=stream; await video.play(); log('Cámara OK ✅','ok');
 
-      // 4) FaceMesh
       const faceMesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`});
       faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.6,minTrackingConfidence:0.6});
 
@@ -158,58 +154,51 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
         const lm=res.multiFaceLandmarks[0];
         const scale=dist(lm[NOSE_BASE],lm[CHIN]);
 
-        // --- CEJAS (calibración + histéresis) ---
-        const browY = (lm[10].y + lm[67].y + lm[297].y)/3;
-        const eyeY  = (lm[159].y + lm[386].y)/2;
-        const browLift = (eyeY - browY) / scale;   // ↑ cejas => valor mayor
-        browsEMA = lerp(browsEMA, browLift, 0.25);
+        const browY=(lm[10].y+lm[67].y+lm[297].y)/3;
+        const eyeY=(lm[159].y+lm[386].y)/2;
+        const browLift=(eyeY-browY)/scale;
+        browsEMA=lerp(browsEMA,browLift,0.25);
 
         if(!browCalibrated){
-          browBase += browsEMA; browFrames++;
-          if(browFrames>70){ browBase/=browFrames; browCalibrated=true; log('Cejas calibradas ✅','ok'); }
+          browBase+=browsEMA;browFrames++;
+          if(browFrames>70){browBase/=browFrames;browCalibrated=true;log('Cejas calibradas ✅','ok');}
         }
-        const liftDelta = browsEMA - browBase;
-        const raiseThreshold = 0.10; // sube aquí la exigencia si quieres más duro (0.12–0.15)
-        const lowerThreshold = 0.06; // libera aquí (algo menor que el de activación)
-        let browsUpNow = browsUp;
-        if (!browsUp && liftDelta > raiseThreshold) browsUpNow = true;
-        if (browsUp && liftDelta < lowerThreshold) browsUpNow = false;
 
-        // --- BOCA ---
-        const mouthDist = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]);
-        const mouthMetric = mouthDist/scale;
-        mouthEMA = lerp(mouthEMA, mouthMetric, 0.35);
-        const mouthOpenNow = mouthEMA > 0.30; // sube/baja si quieres
+        const liftDelta=browsEMA-browBase;
+        const raiseT=0.10, lowerT=0.06;
+        let browsUpNow=browsUp;
+        if(!browsUp && liftDelta>raiseT) browsUpNow=true;
+        if(browsUp && liftDelta<lowerT) browsUpNow=false;
 
-        // 👄 Abrir boca → Audio A
-        if (mouthOpenNow && !mouthOpen) { ramp(gainA,0.9); }
-        if (!mouthOpenNow && mouthOpen) { ramp(gainA,0.0); }
-        mouthOpen = mouthOpenNow;
+        const mouthDist=dist(lm[MOUTH_TOP],lm[MOUTH_BOTTOM]);
+        const mouthMetric=mouthDist/scale;
+        mouthEMA=lerp(mouthEMA,mouthMetric,0.35);
+        const mouthOpenNow=mouthEMA>0.30;
 
-        // 👆 Subir cejas → Audio B
-        if (browsUpNow && !browsUp) { ramp(gainB,0.95); }
-        if (!browsUpNow && browsUp) { ramp(gainB,0.0); }
-        browsUp = browsUpNow;
+        if(mouthOpenNow&&!mouthOpen) ramp(gainA,0.9);
+        if(!mouthOpenNow&&mouthOpen) ramp(gainA,0.0);
+        mouthOpen=mouthOpenNow;
+
+        if(browsUpNow&&!browsUp) ramp(gainB,0.95);
+        if(!browsUpNow&&browsUp) ramp(gainB,0.0);
+        browsUp=browsUpNow;
 
         browDot.classList.toggle('on',browsUp);
         mouthDot.classList.toggle('on',mouthOpen);
         drawGlass(lm);
       });
 
-      new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});},
-        width:video.videoWidth,height:video.videoHeight}).start();
-
-      log('AR + audio (Cejas + Boca) listos ✅','ok');
+      new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});}}).start();
+      log('AR + audio (iOS fix) listos ✅','ok');
     }catch(e){
-      log('Error al iniciar: ' + (e?.message || e),'err');
+      log('Error: '+(e.message||e),'err');
       ovl.style.display='flex';
-      ovl.querySelector('.cta').textContent =
-        'Pulsa aquí de nuevo. Si sigue, revisa permisos y formato (WAV 16-bit/44.1k o sube MP3).';
+      ovl.querySelector('.cta').textContent='Permite cámara/sonido (candado) y toca aquí de nuevo';
     }
   }
 
-  document.getElementById('stage').addEventListener('click',start,{once:true});
-  document.getElementById('stage').addEventListener('touchstart',start,{once:true});
+  document.getElementById('stage').addEventListener('click',start);
+  document.getElementById('stage').addEventListener('touchstart',start);
   log('Tip: quita el Modo Silencio del iPhone y sube volumen 🔊','warn');
 })();
 </script>
