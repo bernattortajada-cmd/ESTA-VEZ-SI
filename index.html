@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — Cejas Calibradas + Boca (WAV)</title>
+  <title>Glass Pulse — Cejas + Boca (WAV/MP3)</title>
   <style>
     :root { --bg:#0b0b0c; --fg:#e7e7ea; }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
@@ -16,7 +16,7 @@
     .overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
       background:rgba(0,0,0,.6);z-index:9;cursor:pointer}
     .cta{background:#ffffff10;border:1px solid #ffffff30;color:#fff;padding:14px 18px;
-      border-radius:14px;font-size:16px;backdrop-filter: blur(6px)}
+      border-radius:14px;font-size:16px;backdrop-filter: blur(6px);text-align:center}
     .badges{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
     .pill{font-size:12px;opacity:.85;border:1px solid #29292e;padding:6px 10px;
       border-radius:999px;background:#17171a}
@@ -56,17 +56,21 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
   const browDot = document.getElementById('browDot');
   const mouthDot = document.getElementById('mouthDot');
 
-  const EXT = '.wav';
-  const FILE_A = 'assets/glass_A_vocal_loop'+EXT;
-  const FILE_B = 'assets/glass_B_beat_loop'+EXT;
+  // === Archivos candidatos: primero WAV, si falla decodificación probamos MP3 ===
+  const AUDIO_CANDIDATES = [
+    { A: 'assets/glass_A_vocal_loop.wav', B: 'assets/glass_B_beat_loop.wav' },
+    { A: 'assets/glass_A_vocal_loop.mp3', B: 'assets/glass_B_beat_loop.mp3' }
+  ];
 
+  // --- WebAudio (iOS friendly) ---
   let actx, gainA, gainB, bufA, bufB;
   function ensureCtx(){ if(!actx){ actx = new (window.AudioContext||window.webkitAudioContext)(); } return actx; }
   async function loadBuffer(url){
-    const res = await fetch(url,{cache:"no-store"});
-    if(!res.ok) throw new Error('No se pudo cargar '+url);
+    const res = await fetch(url, { cache:"no-store" });
+    if(!res.ok) throw new Error(`No se pudo cargar ${url} (${res.status})`);
     const arr = await res.arrayBuffer();
-    return await ensureCtx().decodeAudioData(arr);
+    try { return await ensureCtx().decodeAudioData(arr); }
+    catch(e){ throw new Error(`Decoding failed: ${url}`); }
   }
   function playLoop(buffer){
     const ctx = ensureCtx();
@@ -77,16 +81,19 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
     return g;
   }
   function ramp(g,to,time=0.12){
-    const ctx=ensureCtx();const now=ctx.currentTime;
+    const ctx = ensureCtx(); const now = ctx.currentTime;
     g.gain.cancelScheduledValues(now);
     g.gain.setValueAtTime(g.gain.value, now);
     g.gain.linearRampToValueAtTime(to, now+time);
   }
-
-  async function unlockAudio(){
-    ensureCtx(); await actx.resume(); log('AudioContext listo ✅','ok');
+  async function unlockAudioOnce(){
+    ensureCtx();
+    try { await actx.resume(); } catch {}
+    log(`AudioContext: ${actx.state}`, actx.state==='running'?'ok':'warn');
+    return actx.state;
   }
 
+  // --- Estados y helpers de landmarks ---
   let browsUp=false, mouthOpen=false, browsEMA=0, mouthEMA=0;
   let browBase=0, browFrames=0, browCalibrated=false;
   const lerp=(a,b,t)=>a+(b-a)*t;
@@ -97,8 +104,7 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
     const w=canvas.width=video.videoWidth||540;
     const h=canvas.height=video.videoHeight||960;
     const g=ctx.createRadialGradient(w*0.5,h*0.35,10,w*0.5,h*0.55,Math.max(w,h)*0.8);
-    g.addColorStop(0,'rgba(255,255,255,0.03)');
-    g.addColorStop(1,'rgba(0,0,0,0.35)');
+    g.addColorStop(0,'rgba(255,255,255,0.03)'); g.addColorStop(1,'rgba(0,0,0,0.35)');
     ctx.fillStyle=g;ctx.fillRect(0,0,w,h);
     const strength=mouthOpen?0.18:0.07;
     ctx.globalCompositeOperation='lighter';
@@ -112,18 +118,38 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
   async function start(){
     try{
       ovl.style.display='none';
-      await unlockAudio();
+
+      // 1) Desbloqueo de audio (iOS)
+      await unlockAudioOnce();
+
+      // 2) Cargar audio con fallback WAV→MP3
       log('Cargando audio A/B…','warn');
-      [bufA, bufB] = await Promise.all([loadBuffer(FILE_A), loadBuffer(FILE_B)]);
+      let loadError = null;
+      for (const cand of AUDIO_CANDIDATES) {
+        try {
+          [bufA, bufB] = await Promise.all([loadBuffer(cand.A), loadBuffer(cand.B)]);
+          log(`Audio cargado (${cand.A.endsWith('.wav')?'WAV':'MP3'}) ✅`,'ok');
+          break;
+        } catch(e){ loadError = e; log(e.message,'err'); }
+      }
+      if (!bufA || !bufB) {
+        ovl.style.display = 'flex';
+        ovl.querySelector('.cta').textContent =
+          'No pude decodificar WAV/MP3. Reexporta A/B a WAV 16-bit 44.1k (o sube MP3) y toca aquí.';
+        throw loadError || new Error('Audio no disponible');
+      }
+      // Inicializa fuentes (en silencio)
       gainA = playLoop(bufA);
       gainB = playLoop(bufB);
-      log('Audio cargado ✅','ok');
 
+      // 3) Cámara
       log('Pidiendo permiso de cámara…','warn');
       const s = await navigator.mediaDevices.getUserMedia({
-        video:{facingMode:'user',width:{ideal:720},height:{ideal:1280}},audio:false});
-      video.srcObject=s;await video.play();log('Cámara OK ✅','ok');
+        video:{facingMode:'user',width:{ideal:720},height:{ideal:1280}}, audio:false
+      });
+      video.srcObject=s; await video.play(); log('Cámara OK ✅','ok');
 
+      // 4) FaceMesh
       const faceMesh=new FaceMesh({locateFile:(f)=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${f}`});
       faceMesh.setOptions({maxNumFaces:1,refineLandmarks:true,minDetectionConfidence:0.6,minTrackingConfidence:0.6});
 
@@ -132,30 +158,28 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
         const lm=res.multiFaceLandmarks[0];
         const scale=dist(lm[NOSE_BASE],lm[CHIN]);
 
-        // --- Calcular "altura cejas vs ojos" ---
+        // --- CEJAS (calibración + histéresis) ---
         const browY = (lm[10].y + lm[67].y + lm[297].y)/3;
-        const eyeY = (lm[159].y + lm[386].y)/2;
-        const browLift = (eyeY - browY) / scale; // más grande = cejas arriba
+        const eyeY  = (lm[159].y + lm[386].y)/2;
+        const browLift = (eyeY - browY) / scale;   // ↑ cejas => valor mayor
         browsEMA = lerp(browsEMA, browLift, 0.25);
 
         if(!browCalibrated){
           browBase += browsEMA; browFrames++;
           if(browFrames>70){ browBase/=browFrames; browCalibrated=true; log('Cejas calibradas ✅','ok'); }
         }
-
-        // --- Histéresis y sensibilidad ---
         const liftDelta = browsEMA - browBase;
-        const raiseThreshold = 0.10; // gesto claro
-        const lowerThreshold = 0.06; // libera cuando baja
+        const raiseThreshold = 0.10; // sube aquí la exigencia si quieres más duro (0.12–0.15)
+        const lowerThreshold = 0.06; // libera aquí (algo menor que el de activación)
         let browsUpNow = browsUp;
         if (!browsUp && liftDelta > raiseThreshold) browsUpNow = true;
         if (browsUp && liftDelta < lowerThreshold) browsUpNow = false;
 
-        // --- Boca ---
+        // --- BOCA ---
         const mouthDist = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]);
         const mouthMetric = mouthDist/scale;
         mouthEMA = lerp(mouthEMA, mouthMetric, 0.35);
-        const mouthOpenNow = mouthEMA > 0.30;
+        const mouthOpenNow = mouthEMA > 0.30; // sube/baja si quieres
 
         // 👄 Abrir boca → Audio A
         if (mouthOpenNow && !mouthOpen) { ramp(gainA,0.9); }
@@ -175,11 +199,12 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
       new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});},
         width:video.videoWidth,height:video.videoHeight}).start();
 
-      log('AR + audio (Cejas calibradas + Boca WAV) listos ✅','ok');
+      log('AR + audio (Cejas + Boca) listos ✅','ok');
     }catch(e){
-      log('Error al iniciar: '+e.message,'err');
+      log('Error al iniciar: ' + (e?.message || e),'err');
       ovl.style.display='flex';
-      ovl.querySelector('.cta').textContent='Permite cámara/sonido (candado) y toca aquí de nuevo';
+      ovl.querySelector('.cta').textContent =
+        'Pulsa aquí de nuevo. Si sigue, revisa permisos y formato (WAV 16-bit/44.1k o sube MP3).';
     }
   }
 
