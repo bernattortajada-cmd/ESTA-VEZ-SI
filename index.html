@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glass Pulse — FINAL WAV</title>
+  <title>Glass Pulse — Cejas + Boca (WAV)</title>
   <style>
     :root { --bg:#0b0b0c; --fg:#e7e7ea; }
     html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);
@@ -35,7 +35,7 @@
     <div class="overlay" id="ovl"><div class="cta">Toca aquí para iniciar cámara + audio</div></div>
   </div>
   <div class="badges">
-    <span class="pill"><span class="dot" id="eyeDot"></span>Ojos cerrados ▸ B</span>
+    <span class="pill"><span class="dot" id="browDot"></span>Cejas arriba ▸ B</span>
     <span class="pill"><span class="dot" id="mouthDot"></span>Boca abierta ▸ A</span>
   </div>
   <div class="log" id="log"></div>
@@ -53,7 +53,7 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
   const canvas = document.getElementById('fx');
   const ctx = canvas.getContext('2d');
   const ovl = document.getElementById('ovl');
-  const eyeDot = document.getElementById('eyeDot');
+  const browDot = document.getElementById('browDot');
   const mouthDot = document.getElementById('mouthDot');
 
   const EXT = '.wav';
@@ -87,10 +87,10 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
     ensureCtx(); await actx.resume(); log('AudioContext listo ✅','ok');
   }
 
-  let eyesClosed=false, mouthOpen=false, eyesEMA=0, mouthEMA=0;
+  let browsUp=false, mouthOpen=false, browsEMA=0, mouthEMA=0;
+  let browBase=0, browFrames=0, browCalibrated=false;
   const lerp=(a,b,t)=>a+(b-a)*t;
-  const L_EYE_TOP=159,L_EYE_BOTTOM=145,R_EYE_TOP=386,R_EYE_BOTTOM=374,
-        MOUTH_TOP=13,MOUTH_BOTTOM=14,NOSE_BASE=1,CHIN=152;
+  const NOSE_BASE=1, CHIN=152, MOUTH_TOP=13, MOUTH_BOTTOM=14;
   const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
 
   function drawGlass(lm){
@@ -132,28 +132,37 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
         const lm=res.multiFaceLandmarks[0];
         const scale=dist(lm[NOSE_BASE],lm[CHIN]);
 
-        const lEye=dist(lm[L_EYE_TOP],lm[L_EYE_BOTTOM]),
-              rEye=dist(lm[R_EYE_TOP],lm[R_EYE_BOTTOM]);
-        const eyeMetric=1-((lEye+rEye)/(2*scale));
-        const mouthMetric=dist(lm[MOUTH_TOP],lm[MOUTH_BOTTOM])/scale;
+        // --- Calcular "altura cejas vs ojos" ---
+        const browY = (lm[10].y + lm[67].y + lm[297].y)/3;
+        const eyeY = (lm[159].y + lm[386].y)/2;
+        const browLift = (eyeY - browY) / scale; // más grande = cejas arriba
+        browsEMA = lerp(browsEMA, browLift, 0.25);
 
-        eyesEMA=lerp(eyesEMA,eyeMetric,0.35);
-        mouthEMA=lerp(mouthEMA,mouthMetric,0.35);
+        if(!browCalibrated){
+          browBase += browsEMA; browFrames++;
+          if(browFrames>40){ browBase/=browFrames; browCalibrated=true; log('Cejas calibradas ✅','ok'); }
+        }
 
-        const eyesClosedNow = eyesEMA>0.63;
-        const mouthOpenNow = mouthEMA>0.30;
+        const liftDelta = browsEMA - browBase;
+        const browsUpNow = browCalibrated && (liftDelta > 0.07); // umbral subir cejas
+
+        // --- Boca ---
+        const mouthDist = dist(lm[MOUTH_TOP], lm[MOUTH_BOTTOM]);
+        const mouthMetric = mouthDist/scale;
+        mouthEMA = lerp(mouthEMA, mouthMetric, 0.35);
+        const mouthOpenNow = mouthEMA > 0.30;
 
         // 👄 Abrir boca → Audio A
         if (mouthOpenNow && !mouthOpen) { ramp(gainA,0.9); }
         if (!mouthOpenNow && mouthOpen) { ramp(gainA,0.0); }
         mouthOpen = mouthOpenNow;
 
-        // 👁️ Cerrar ojos → Audio B
-        if (eyesClosedNow && !eyesClosed) { ramp(gainB,0.95); }
-        if (!eyesClosedNow && eyesClosed) { ramp(gainB,0.0); }
-        eyesClosed = eyesClosedNow;
+        // 👆 Subir cejas → Audio B
+        if (browsUpNow && !browsUp) { ramp(gainB,0.95); }
+        if (!browsUpNow && browsUp) { ramp(gainB,0.0); }
+        browsUp = browsUpNow;
 
-        eyeDot.classList.toggle('on',eyesClosed);
+        browDot.classList.toggle('on',browsUp);
         mouthDot.classList.toggle('on',mouthOpen);
         drawGlass(lm);
       });
@@ -161,7 +170,7 @@ logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;}
       new Camera(video,{onFrame:async()=>{await faceMesh.send({image:video});},
         width:video.videoWidth,height:video.videoHeight}).start();
 
-      log('AR + audio (FINAL WAV) listos ✅','ok');
+      log('AR + audio (Cejas + Boca WAV) listos ✅','ok');
     }catch(e){
       log('Error al iniciar: '+e.message,'err');
       ovl.style.display='flex';
